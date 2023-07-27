@@ -29,7 +29,7 @@ openai.api_base = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
 
 
 def main(multiline: bool = False):
-    proc = subprocess.run(["git", "diff", "HEAD"], capture_output=True, text=True)
+    proc = subprocess.run(["git", "diff", "HEAD"], capture_output=True, text=True, encoding="utf-8")
     if proc.returncode != 0:
         if proc.stderr.startswith("warning: Not a git repository."):
             logging.error("Not a git repository")
@@ -111,7 +111,7 @@ def main(multiline: bool = False):
             files = commits[int(index)].get("files", [])
             proc = subprocess.run(
                 ["git", "commit", "-q", "-m", message, "--", *files],
-                capture_output=True, text=True)
+                capture_output=True, text=True,encoding="utf-8")
             if proc.returncode != 0:
                 commits.pop(int(index))
                 error_count += 1
