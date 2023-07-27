@@ -1,5 +1,5 @@
 # Git Commit Message Generator
-
+(日本語README)[https://github.com/anchisan/auto-commit/blob/main/README-ja.md]
 This script generates commit messages for Git repositories based on the changes made in the working directory. It utilizes the OpenAI GPT-3.5 Turbo model to provide descriptive and relevant commit messages for each logical change.
 
 # Installation
