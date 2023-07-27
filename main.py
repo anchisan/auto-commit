@@ -94,14 +94,23 @@ def main(multiline: bool = False):
         table.add_column("Message")
         table.add_column("Files")
         for i, commit in enumerate(commits):
-            table.add_row(str(i), commit.get("message", "").rstrip(), "\n".join(commit.get("files", [])))
+            message = commit.get("message", "").rstrip()
+            # if message is multiline, only show first line
+            if not multiline:
+                message = message.split("\n")[0]
+            files = commit.get("files", [])
+            table.add_row(str(i), message, "\n".join(files))
         console.print(table)
         index = input("Select commit: ")
         confirm = input("Confirm? [(y)es/(n)o/(e)dit]: ")
         if confirm == "y":
+            message = commits[int(index)].get("message", "").rstrip()
+            # if message is multiline, only show first line
+            if not multiline:
+                message = message.split("\n")[0]
+            files = commits[int(index)].get("files", [])
             proc = subprocess.run(
-                ["git", "commit", "-q", "-m", commits[int(index)]["message"].rstrip(), "--",
-                 *commits[int(index)].get("files", [])],
+                ["git", "commit", "-q", "-m", message, "--", *files],
                 capture_output=True, text=True)
             if proc.returncode != 0:
                 commits.pop(int(index))
