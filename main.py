@@ -9,11 +9,12 @@ import logging
 import tempfile
 import json
 import argparse
+from sys import exit
 
 log_level = logging.getLevelName(os.getenv("LOG_LEVEL", "INFO"))
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=log_level,
     # colored format
     format="%(message)s",
     datefmt="[%X]",
@@ -45,6 +46,7 @@ def main(multiline: bool = False):
         """
         # This function generates a commit message from the output of `git diff`.
         # Generate a commit message that is generally considered desirable.
+        # If arg multiline is True, the commit message will be multiline.
         # return value is json string.
         # Use prefix which is generally used in commit message.
         # It is desirable to write following 5w1h.
@@ -52,16 +54,15 @@ def main(multiline: bool = False):
         # return in yaml which can read with `json.load()`
         # One commit per logical change.
         # First letter of first line should be capitalized.
-        # Do not end the first line with a period.
-        # Do not end `message` with blank line.
-        # If `multiline` is True, `message` should be multiline string.
+        # DO NOT end the first line with a period.
+        # DO NOT end `message` with blank line.
         # return value example
         # [
         #   {
         #    "message": <commit message>,
         #    "files": ["file1", "file2"]
         #   },
-        #   <same format as above>
+        #   <same format>
         # ]
         """
 
@@ -88,18 +89,19 @@ def main(multiline: bool = False):
     skipped_count = 0
     error_count = 0
     while commits:
-        table = rich.table.Table(title="Commits")
+        table = rich.table.Table(title="Commit Suggestions")
         table.add_column("#")
         table.add_column("Message")
         table.add_column("Files")
         for i, commit in enumerate(commits):
-            table.add_row(str(i), commit.get("message", ""), "\n".join(commit["files"]))
+            table.add_row(str(i), commit.get("message", "").rstrip(), "\n".join(commit.get("files", [])))
         console.print(table)
         index = input("Select commit: ")
         confirm = input("Confirm? [(y)es/(n)o/(e)dit]: ")
         if confirm == "y":
             proc = subprocess.run(
-                ["git", "commit","-q", "-m", commits[int(index)]["message"], "--", *commits[int(index)]["files"]],
+                ["git", "commit", "-q", "-m", commits[int(index)]["message"].rstrip(), "--",
+                 *commits[int(index)].get("files", [])],
                 capture_output=True, text=True)
             if proc.returncode != 0:
                 commits.pop(int(index))
@@ -126,14 +128,14 @@ def main(multiline: bool = False):
         else:
             print("Unknown command")
             continue
-    console.print(f"Commits: {commit_count}, Skipped: {skipped_count}, Errors: {error_count}")
+    console.print(
+        f"Commits: {commit_count}, Skipped: [yellow]{skipped_count}[/yellow], Errors: [red]{error_count}[/red]")
 
 
 if __name__ == '__main__':
     try:
         parser = argparse.ArgumentParser(description="Generate commit message from git diff")
-        parser.add_argument("--multiline", "-m", action="store_true", help="If set, commit message will be multiline",
-                            default=False)
+        parser.add_argument("--multiline", "-m", action="store_true", help="If set, commit message will be multiline")
         args = parser.parse_args()
         main(multiline=args.multiline)
     except KeyboardInterrupt:
