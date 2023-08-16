@@ -10,25 +10,23 @@ import tempfile
 import json
 import argparse
 from sys import exit
-
-log_level = logging.getLevelName(os.getenv("LOG_LEVEL", "INFO"))
-
-logging.basicConfig(
-    level=log_level,
-    # colored format
-    format="%(message)s",
-    datefmt="[%X]",
-    handlers=[rich.logging.RichHandler(rich_tracebacks=True)]
-)
-logging.getLogger('openai').setLevel(logging.ERROR)
-logging.getLogger('urllib3').setLevel(logging.ERROR)
+import tiktoken
 
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
 openai.api_base = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
 
 
-def main(multiline: bool = False):
+def main(multiline: bool = False, debug: bool = False, model: str = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo-16k"),
+         granularity: float = 0.5):
+    # logger setup
+    logging.basicConfig(
+        level="DEBUG" if debug else os.getenv("LOG_LEVEL", "INFO"),
+        # colored format
+        format="%(message)s",
+        datefmt="[%X]",
+        handlers=[rich.logging.RichHandler(rich_tracebacks=True)]
+    )
     proc = subprocess.run(["git", "diff", "HEAD"], capture_output=True, text=True, encoding="utf-8")
     if proc.returncode != 0:
         if proc.stderr.startswith("warning: Not a git repository."):
@@ -41,7 +39,6 @@ def main(multiline: bool = False):
         logging.info("No changes")
         exit(0)
 
-    # This string is not a python comment.
     description = \
         """
         # This function generates a commit message from the output of `git diff`.
@@ -53,6 +50,7 @@ def main(multiline: bool = False):
         # content of json string is a list of dict.
         # return in yaml which can read with `json.load()`
         # One commit per logical change.
+        # argument `granularity` is granularity of commit. max:1 min:0 higher is more granular.
         # First letter of first line should be capitalized.
         # DO NOT end the first line with a period.
         # DO NOT end `message` with blank line.
@@ -65,16 +63,28 @@ def main(multiline: bool = False):
         #   <same format>
         # ]
         """
-
     fn_args = proc.stdout
+    messages = [
+        {"role": "system", "content": f"You are now the following python function:```{description}"
+                                      f"\ngenerate_commit_msg(diff:str,multiline:bool=False) -> str```\n\nOnly respond with your `return` value.\nNot python code."
+                                      f"\nOther text will be ignored."},
+        {"role": "user", "content": f"diff={fn_args},multiline={multiline},granularity={granularity}"},
+    ]
+
+    token_len = len(tiktoken.encoding_for_model(model).encode("\n".join([m["content"] for m in messages])))
+    logging.debug(f"tokens: {token_len}")
+    if "gpt-4" in model and token_len > 8192:
+        logging.warning(f"Token length is {token_len}, which is over 8192. Using gpt-4-32k instead.")
+        model = model.replace("gpt-4", "gpt-4-32k")
+    elif "gpt-3.5-turbo" in model and token_len > 4096:
+        logging.warning(f"Token length is {token_len}, which is over 4096. Using gpt-3.5-turbo-16k instead.")
+        model = model.replace("gpt-3.5-turbo", "gpt-3.5-turbo-16k")
+    elif "16k" or "32k" in model:
+        pass
+
     result = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
-        messages=[
-            {"role": "system", "content": f"You are now the following python function:```{description}"
-                                          f"\ngenerate_commit_msg(diff:str,multiline:bool=False) -> str```\n\nOnly respond with your `return` value.\nNot python code."
-                                          f"\nOther text will be ignored."},
-            {"role": "user", "content": f"diff={fn_args},multiline={multiline}"},
-        ]
+        model=model,
+        messages=messages
     )
     try:
         commits = json.loads(result.choices[0]["message"]["content"])
@@ -111,7 +121,7 @@ def main(multiline: bool = False):
             files = commits[int(index)].get("files", [])
             proc = subprocess.run(
                 ["git", "commit", "-q", "-m", message, "--", *files],
-                capture_output=True, text=True,encoding="utf-8")
+                capture_output=True, text=True, encoding="utf-8")
             if proc.returncode != 0:
                 commits.pop(int(index))
                 error_count += 1
@@ -129,8 +139,12 @@ def main(multiline: bool = False):
             with tempfile.NamedTemporaryFile(mode="w+") as f:
                 f.write(commits[int(index)]["message"])
                 f.flush()
-                subprocess.run([os.getenv("EDITOR", "code"), f.name], shell=True)
-                input("When you are done, press enter to continue")
+                editor = os.getenv("EDITOR", "code --wait")
+                logging.info("Waiting for editor to close...")
+                subprocess.run([editor, f.name], shell=True)
+                if "--wait" not in editor:
+                    # if editor does not support --wait, wait for user to close editor
+                    input("When you are done, press enter to continue")
                 f.seek(0)
                 commits[int(index)]["message"] = f.read()
             continue
@@ -138,15 +152,19 @@ def main(multiline: bool = False):
             print("Unknown command")
             continue
     console.print(
-        f"Commits: {commit_count}, Skipped: [yellow]{skipped_count}[/yellow], Errors: [red]{error_count}[/red]")
+        f"Commits: {commit_count}, Skipped: [yellow]{skipped_count}[/yellow], Errors: [red]{error_count}[/red]"
+    )
 
 
 if __name__ == '__main__':
     try:
         parser = argparse.ArgumentParser(description="Generate commit message from git diff")
-        parser.add_argument("--multiline", "-m", action="store_true", help="If set, commit message will be multiline")
+        parser.add_argument("--multiline", "-M", action="store_true", help="If set, commit message will be multiline")
+        parser.add_argument("--debug", "-d", action="store_true", help="If set, debug log will be shown")
+        parser.add_argument("--model", "-m", default="gpt-3.5-turbo", help="OpenAI model to use")
+        parser.add_argument("--granularity", "-g", default=0.5, type=float, help="Granularity of commit")
         args = parser.parse_args()
-        main(multiline=args.multiline)
+        main(multiline=args.multiline, debug=args.debug, model=args.model, granularity=args.granularity)
     except KeyboardInterrupt:
         print("Interrupted")
         exit(0)
