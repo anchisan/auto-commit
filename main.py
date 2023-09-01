@@ -27,7 +27,7 @@ def main(multiline: bool = False, debug: bool = False, model: str = os.getenv("O
         datefmt="[%X]",
         handlers=[rich.logging.RichHandler(rich_tracebacks=True)]
     )
-    proc = subprocess.run(["git", "diff", "HEAD"], capture_output=True, text=True, encoding="utf-8")
+    proc = subprocess.run(["git", "diff","--unified=0", "HEAD"], capture_output=True, text=True, encoding="utf-8")
     if proc.returncode != 0:
         if proc.stderr.startswith("warning: Not a git repository."):
             logging.error("Not a git repository")
@@ -54,11 +54,15 @@ def main(multiline: bool = False, debug: bool = False, model: str = os.getenv("O
         # First letter of first line should be capitalized.
         # DO NOT end the first line with a period.
         # DO NOT end `message` with blank line.
+        # `line` must be used in the range in the commit log
         # return value example
         # [
         #   {
         #    "message": <commit message>,
-        #    "files": ["file1", "file2"]
+        #    "files": {
+        #       <Path from parent>: "<line-start>-<line-end>" or "<line-number>",
+        #       ...
+            }
         #   },
         #   <same format>
         # ]
@@ -102,13 +106,14 @@ def main(multiline: bool = False, debug: bool = False, model: str = os.getenv("O
         table = rich.table.Table(title="Commit Suggestions")
         table.add_column("#")
         table.add_column("Message")
-        table.add_column("Files")
+        table.add_column("Files:line")
         for i, commit in enumerate(commits):
             message = commit.get("message", "").rstrip()
             # if message is multiline, only show first line
             if not multiline:
                 message = message.split("\n")[0]
-            files = commit.get("files", [])
+            files = commit.get("files", {})
+            files = [f"{file}:{line}" for file, line in files.items()]
             table.add_row(str(i), message, "\n".join(files))
         console.print(table)
         index = input("Select commit: ")
